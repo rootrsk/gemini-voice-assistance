@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0"/>
+<title>JARVIS • Quantum Terminal</title>
+
+<style>
+/* ===============================
+   GLOBAL + STATUS COLORS
+================================ */
+:root{
+  --q-bg:#050007;
+  --q-light:#e3b2ff;
+
+  /* default */
+  --status-color:#b000ff;
+}
+
+body.idle       { --status-color:#b000ff; }
+body.listening  { --status-color:#00d2ff; }
+body.thinking   { --status-color:#ffaa00; }
+body.speaking   { --status-color:#ff2cff; }
+body.error      { --status-color:#ff0000; }
+
+html,body{
+  margin:0;
+  height:100%;
+  background:var(--q-bg);
+  color:white;
+  font-family:"Segoe UI",sans-serif;
+  overflow:hidden;
+  touch-action:none;
+}
+
+/* ===============================
+   INTRO
+================================ */
+#intro-screen{
+  position:fixed;
+  inset:0;
+  background:#060009;
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+  text-align:center;
+  z-index:999;
+}
+
+#intro-screen h1{
+  letter-spacing:3px;
+  text-shadow:0 0 25px var(--status-color);
+}
+
+#begin-btn{
+  margin-top:24px;
+  padding:12px 28px;
+  border-radius:40px;
+  border:2px solid var(--status-color);
+  background:transparent;
+  color:var(--q-light);
+  box-shadow:0 0 25px var(--status-color);
+  cursor:pointer;
+}
+
+/* ===============================
+   ARC REACTOR
+================================ */
+#core-wrap{
+  position:absolute;
+  top:15vh;
+  left:0; right:0;
+  margin:auto;
+  width:260px;
+  height:260px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+}
+
+#reactor{
+  width:100%;
+  height:100%;
+  border-radius:50%;
+  border:4px solid var(--status-color);
+  box-shadow:
+    0 0 35px var(--status-color),
+    inset 0 0 40px var(--status-color);
+  transition:.1s ease;
+}
+
+.ring{
+  position:absolute;
+  inset:0;
+  border-radius:50%;
+  border:1px dashed var(--status-color);
+  opacity:.3;
+  animation:spin 8s linear infinite;
+}
+
+@keyframes spin{
+  to{transform:rotate(360deg)}
+}
+
+/* ===============================
+   FUTURISTIC TERMINAL HUD
+================================ */
+#hud{
+  position:absolute;
+  bottom:0; left:0; right:0;
+  height:40%;
+  padding:14px;
+  overflow-y:auto;
+
+  background:
+    linear-gradient(
+      rgba(10,0,20,.85),
+      rgba(5,0,15,.9)
+    );
+  backdrop-filter:blur(14px);
+
+  font-family:"JetBrains Mono","Fira Code",monospace;
+  font-size:13px;
+  letter-spacing:.5px;
+
+  box-shadow:
+    inset 0 0 40px rgba(176,0,255,.15),
+    0 -10px 40px rgba(0,0,0,.6);
+}
+
+/* scanlines */
+#hud::before{
+  content:"";
+  position:absolute;
+  inset:0;
+  pointer-events:none;
+  background:
+    repeating-linear-gradient(
+      to bottom,
+      rgba(255,255,255,.03),
+      rgba(255,255,255,.03) 1px,
+      transparent 1px,
+      transparent 3px
+    );
+}
+
+/* blinking cursor */
+#hud::after{
+  content:"█";
+  display:block;
+  margin-top:6px;
+  color:var(--status-color);
+  animation:blink 1s steps(1) infinite;
+}
+
+@keyframes blink{
+  50%{opacity:0}
+}
+
+/* terminal line */
+.hud-line{
+  margin:6px 0;
+  padding-left:10px;
+  white-space:pre-wrap;
+  animation:fadeIn .25s ease-out;
+}
+
+@keyframes fadeIn{
+  from{opacity:0; transform:translateY(4px)}
+  to{opacity:1; transform:translateY(0)}
+}
+
+/* user input */
+.hud-line.user{
+  color:#00d2ff;
+  border-left:3px solid #00d2ff;
+  text-shadow:0 0 6px rgba(0,210,255,.6);
+}
+.hud-line.user::before{
+  content:">_ ";
+}
+
+/* AI output */
+.hud-line.ai{
+  color:var(--q-light);
+  border-left:3px solid var(--status-color);
+  text-shadow:0 0 8px rgba(176,0,255,.6);
+}
+.hud-line.ai::before{
+  content:"JARVIS:: ";
+}
+</style>
+</head>
+
+<body class="idle">
+
+<!-- INTRO -->
+<div id="intro-screen">
+  <h1>Quantum JARVIS</h1>
+  <p>Initialize voice reactor</p>
+  <button id="begin-btn">ACTIVATE</button>
+</div>
+
+<!-- REACTOR -->
+<div id="core-wrap">
+  <div class="ring"></div>
+  <div id="reactor"></div>
+</div>
+
+<!-- TERMINAL -->
+<div id="hud"></div>
+
+<script type="module">
+import { GoogleGenAI, Modality } from "https://esm.run/@google/genai";
+
+let session=null, inCtx=null, outCtx=null;
+let reactor=document.getElementById("reactor");
+let hud=document.getElementById("hud");
+let nextStart=0;
+
+/* ---------- STATUS ---------- */
+function setStatus(s){
+  document.body.className=s;
+}
+
+/* ---------- TERMINAL OUTPUT ---------- */
+function hudMsg(text, cls){
+  if(!text.trim()) return;
+  const line=document.createElement("div");
+  line.className="hud-line "+cls;
+  hud.appendChild(line);
+  hud.scrollTop=hud.scrollHeight;
+
+  let i=0;
+  const speed=cls==="user"?5:8;
+  function type(){
+    if(i<text.length){
+      line.textContent+=text[i++];
+      setTimeout(type,speed);
+    }
+  }
+  type();
+}
+
+/* ---------- AUDIO ---------- */
+function encode(f32){
+  const i16=new Int16Array(f32.length);
+  for(let i=0;i<f32.length;i++)
+    i16[i]=Math.max(-1,Math.min(1,f32[i]))*32768;
+  return btoa(String.fromCharCode(...new Uint8Array(i16.buffer)));
+}
+
+async function decode(b64,ctx){
+  const bin=atob(b64);
+  const i16=new Int16Array(new Uint8Array([...bin].map(c=>c.charCodeAt(0))).buffer);
+  const buf=ctx.createBuffer(1,i16.length,24000);
+  buf.getChannelData(0).set(i16.map(v=>v/32768));
+  return buf;
+}
+
+/* ---------- START ---------- */
+async function startJarvis(){
+  setStatus("thinking");
+
+  const key=localStorage.jarvis_key||prompt("Enter Gemini API Key");
+  if(!key) return setStatus("error");
+  localStorage.jarvis_key=key;
+
+  const ai=new GoogleGenAI({apiKey:key});
+  inCtx=new AudioContext({sampleRate:16000});
+  outCtx=new AudioContext({sampleRate:24000});
+
+  await inCtx.audioWorklet.addModule(URL.createObjectURL(new Blob([`
+    class VAD extends AudioWorkletProcessor{
+      process(inputs){
+        const ch=inputs[0][0];
+        if(ch){
+          const peak=Math.max(...ch.map(Math.abs));
+          this.port.postMessage({pcm:ch,peak});
+        }
+        return true;
+      }
+    }
+    registerProcessor("vad",VAD);
+  `],{type:"application/javascript"})));
+
+  const stream=await navigator.mediaDevices.getUserMedia({audio:true});
+  const src=inCtx.createMediaStreamSource(stream);
+  const node=new AudioWorkletNode(inCtx,"vad",{numberOfInputs:1,numberOfOutputs:0});
+  src.connect(node);
+
+  node.port.onmessage=e=>{
+    const {pcm,peak}=e.data;
+    if(peak>0.02) setStatus("listening");
+    reactor.style.transform=`scale(${1+peak*5})`;
+
+    if(session){
+      session.sendRealtimeInput({
+        media:{data:encode(pcm),mimeType:"audio/pcm;rate=16000"}
+      });
+    }
+  };
+
+  session=await ai.live.connect({
+    model:"gemini-2.5-flash-native-audio-preview-12-2025",
+    config:{
+      responseModalities:[Modality.AUDIO],
+      speechConfig:{
+        voiceConfig:{prebuiltVoiceConfig:{voiceName:"Zephyr"}}
+      },
+      inputAudioTranscription:{},
+      outputAudioTranscription:{}
+    },
+    callbacks:{
+      onopen(){
+        setStatus("listening");
+        hudMsg("System online.","ai");
+      },
+      onmessage:async msg=>{
+        if(msg.serverContent?.inputTranscription){
+          setStatus("thinking");
+          hudMsg(msg.serverContent.inputTranscription.text,"user");
+        }
+
+        const audio=msg.serverContent?.modelTurn?.parts?.[0]?.inlineData?.data;
+        if(audio){
+          setStatus("speaking");
+          const b=await decode(audio,outCtx);
+          const s=outCtx.createBufferSource();
+          s.buffer=b;
+          s.connect(outCtx.destination);
+          s.start(nextStart=Math.max(nextStart,outCtx.currentTime));
+          nextStart+=b.duration;
+          s.onended=()=>setStatus("idle");
+        }
+      },
+      onerror(e){
+        setStatus("error");
+        hudMsg("ERROR: "+e.message,"ai");
+      },
+      onclose(){
+        setStatus("idle");
+        hudMsg("Connection closed.","ai");
+      }
+    }
+  });
+}
+
+/* ---------- ACTIVATE ---------- */
+document.getElementById("begin-btn").onclick=()=>{
+  document.getElementById("intro-screen").style.display="none";
+  startJarvis();
+};
+</script>
+</body>
+</html>
